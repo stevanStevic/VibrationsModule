@@ -105,7 +105,7 @@ int vibration_driver_open(struct inode* inode, struct file* filp)
 	return 0;
 }
 
-static int construct_device(Device* dev, int minor, struct class *class)
+int construct_device(Device* dev, int minor, struct class *class)
 {
 	int err;
 	dev_t devno;

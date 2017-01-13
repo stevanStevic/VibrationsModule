@@ -50,6 +50,7 @@ static ssize_t vibration_driver_read(struct file*, char* buf, size_t , loff_t*);
 static ssize_t vibration_driver_write(struct file*, const char* buf, size_t , loff_t*);
 
 /* Declartaion of internal driver functions */
+static int construct_device(Device* dev, int minor, struct class *class);
 static irqreturn_t h_irq_gpio3(int irq, void *data);
 
 /* Structure that declares the usual file access functions. */
