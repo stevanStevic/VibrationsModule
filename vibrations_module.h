@@ -29,7 +29,7 @@
 #include <asm/uaccess.h>
 
 /* Allowing to print kernel messages */
-#define DEBUG
+//#define DEBUG
 
 /* Documentation info */
 #define DRIVER_AUTHOR "Stevan Stevic"
@@ -41,6 +41,14 @@
 #define BUFF_LEN 1024
 #define BLOCK_LEN 512
 
+typedef struct device_st {
+	unsigned char *data;
+	unsigned int period;
+	unsigned int timestamp;
+	struct mutex dev_mutex; 
+	struct cdev c_dev;
+} Device;
+
 /* Declaration of default driver functions */
 int vibration_driver_init(void);
 void vibration_driver_exit(void);
@@ -51,7 +59,8 @@ static ssize_t vibration_driver_write(struct file*, const char* buf, size_t , lo
 
 /* Declartaion of internal driver functions */
 static int construct_device(Device* dev, int minor, struct class *class);
-static irqreturn_t h_irq_gpio3(int irq, void *data);
+static enum hrtimer_restart blink_timer_callback(struct hrtimer *param);
+static irqreturn_t h_irq_gpio(int irq, void *data);
 
 /* Structure that declares the usual file access functions. */
 struct file_operations driver_fops =
@@ -61,12 +70,5 @@ struct file_operations driver_fops =
     read    :   vibration_driver_read,
     write   :   vibration_driver_write
 };
-
-typedef struct device_st {
-	unsigned char *data;
-	struct mutex dev_mutex; 
-	struct cdev c_dev;
-} Device;
-
 
 #endif

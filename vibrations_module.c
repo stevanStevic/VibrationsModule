@@ -7,18 +7,54 @@ static struct class *cl;
 static int major_number;
 static int devices_to_destroy;
 
+/* Timer variables */
+static struct hrtimer blink_timer;
+static ktime_t kt;
+static long long current_time = 0;
+
+#define TIMER_SEC    0
+#define TIMER_NANO_SEC  1*1000*1000 /* 250ms */
+
+/* Default GPIO pins if no arguments passed */
+static int do_GPIO_pins[4] = {GPIO_02, GPIO_03, GPIO_18, GPIO_22};
+static int argc =  0;
+
 /* IRQ number. */
-static int irq_gpio3 = -1;
+static int irq_gpio = -1;
 
-static irqreturn_t h_irq_gpio3(int irq, void *data)
+/*
+* module_param_array(variable_name, data_type, num, perm);
+* The first param is the parameter's (in this case the array's) name.
+* The second param is the data type of the elements of the array.
+* The third argument is a pointer to the variable that will store the number
+* of elements of the array initialized by the user at module loading time.
+* The fourth argument is the permission bits.
+*/
+module_param_array(do_GPIO_pins, int, &argc, 0000);
+MODULE_PARM_DESC(do_GPIO_pins, "Array of GPIO pins were DO pin of SW-420 vibration sensor is connected.");
+
+enum hrtimer_restart blink_timer_callback(struct hrtimer *param)
 {
-    static char value = -1;
+	current_time++;
 
-    //printk("Interrupt from IRQ 0x%x\n", irq);    
+    hrtimer_forward(&blink_timer, ktime_get(), kt);
     
-    value = GetGpioPinValue(GPIO_03);
-    
-    printk("GPIO_03 level = %d\n", value);    //0x%x
+    return HRTIMER_RESTART;
+}
+
+
+static irqreturn_t h_irq_gpio(int irq, void *data)
+{
+#ifdef DEBUG
+    printk("Interrupt from IRQ 0x%x\n", irq);    
+#endif
+
+	Device* dev = (Device*)(data);
+
+	/* Period is current time - prevoius time that interrupt occured */	
+	dev->period = current_time - dev->timestamp;
+
+	dev->timestamp = current_time;
         
     return IRQ_HANDLED;
 }
@@ -87,9 +123,11 @@ int vibration_driver_open(struct inode* inode, struct file* filp)
 
 	if (inode->i_cdev != &(dev->c_dev))
 	{
-		printk(KERN_WARNING "open(): internal error\n");
 		return -ENODEV; /* No such device */
 	}
+
+	dev->period = 0;
+	dev->timestamp = 0;
 
 	/* Memory allocation for data if first time opened */
 	if (dev->data == NULL)
@@ -136,6 +174,9 @@ int construct_device(Device* dev, int minor, struct class *class)
 		printk(KERN_WARNING "Error %d while trying to create %s%d", err, DEVICE_NAME, minor);
 		cdev_del(&(dev->c_dev));
 	}
+#ifdef DEBUG
+	printk(KERN_INFO "Device files created\n");
+#endif
 
 	return 0;
 }
@@ -179,7 +220,7 @@ int vibration_driver_init(void)
 		goto error;	
 	}
 	
-	/* creating devices one by one */
+	/* Creating devices one by one */
 	for(i = 0; i < MAXDEVICES; i++) {
 		err = construct_device(&devices[i], i, cl);
 		if(err) {
@@ -189,15 +230,33 @@ int vibration_driver_init(void)
 		}	
 	}
 
-	SetInternalPullUpDown(GPIO_03, PULL_UP);
-	SetGpioPinDirection(GPIO_03, GPIO_DIRECTION_IN);
+	/* Initialize high resolution timer. */
+    hrtimer_init(&blink_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    kt = ktime_set(TIMER_SEC, TIMER_NANO_SEC);    
+    blink_timer.function = &blink_timer_callback;
+    hrtimer_start(&blink_timer, kt, HRTIMER_MODE_REL); 
 
-	gpio_request_one(GPIO_03, GPIOF_IN, "irq_gpio3");
-    irq_gpio3 = gpio_to_irq(GPIO_03);    
-    if( (request_irq(irq_gpio3, h_irq_gpio3, IRQF_TRIGGER_FALLING, "irq_gpio3", (void *)(h_irq_gpio3))) != 0)
-    {
-        printk("Error: ISR not registered!\n");
-    }        
+#ifdef DEBUG
+	printk(KERN_INFO "Timer is set\n");
+#endif   
+
+	for(i = 0; i < MAXDEVICES; i++) {
+		/* Setting pin direction to INPUT */
+		SetInternalPullUpDown(do_GPIO_pins[i], PULL_UP);
+		SetGpioPinDirection(do_GPIO_pins[i], GPIO_DIRECTION_IN);
+
+		/* Enabling interrupts */
+		gpio_request_one(do_GPIO_pins[i], GPIOF_IN, "irq_gpio");
+    	irq_gpio = gpio_to_irq(do_GPIO_pins[i]);    
+		err = request_irq(irq_gpio, h_irq_gpio, IRQF_TRIGGER_FALLING, "irq_gpio", (void *)&devices[i]);	//devices[i] as data parametar for interrupt 
+    	if( err ) {
+       		printk("Error: ISR %d not registered!\n", do_GPIO_pins[i]);
+   		}        
+	}
+
+#ifdef DEBUG
+	printk(KERN_INFO "GPIO pins set successfully\n");
+#endif   
 
 	return 0;	//Success
 
@@ -210,11 +269,19 @@ error:
 void vibration_driver_exit(void) 
 {
 	int i;
+	int numOfIterations;
 
 	/* Clear GPIO pins. */
-    SetInternalPullUpDown(GPIO_03, PULL_NONE);
+	for(i = 0; i < MAXDEVICES; i++) {
+    	SetInternalPullUpDown(do_GPIO_pins[i], PULL_NONE);
+	}
+
+	/* Timer destroy */
+	hrtimer_cancel(&blink_timer);    
 
 	if (devices) {
+		numOfIterations = devices_to_destroy ? devices_to_destroy : MAXDEVICES;
+ 
 		for (i = 0; i < devices_to_destroy; i++) {
 			device_destroy(cl, MKDEV(major_number, i));
 			cdev_del(&(devices[i].c_dev));
