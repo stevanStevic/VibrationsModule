@@ -35,18 +35,22 @@
 #define DRIVER_AUTHOR "Stevan Stevic"
 #define DRIVER_DESC "Simple driver that handles up to 4 vibration sensor (SW-420) or similar"
 
-
 #define MAXDEVICES 4
-
 #define DEVICE_NAME "vibrato"
 
-/* Declaration of driver functions */
+#define BUFF_LEN 1024
+#define BLOCK_LEN 512
+
+/* Declaration of default driver functions */
 int vibration_driver_init(void);
 void vibration_driver_exit(void);
 static int vibration_driver_open(struct inode*, struct file*);
 static int vibration_driver_release(struct inode*, struct file*);
 static ssize_t vibration_driver_read(struct file*, char* buf, size_t , loff_t*);
 static ssize_t vibration_driver_write(struct file*, const char* buf, size_t , loff_t*);
+
+/* Declartaion of internal driver functions */
+static irqreturn_t h_irq_gpio3(int irq, void *data);
 
 /* Structure that declares the usual file access functions. */
 struct file_operations driver_fops =
@@ -62,20 +66,6 @@ typedef struct device_st {
 	struct mutex dev_mutex; 
 	struct cdev c_dev;
 } Device;
-
-
-static irqreturn_t h_irq_gpio3(int irq, void *data)
-{
-    static char value = -1;
-
-    printk("Interrupt from IRQ 0x%x\n", irq);    
-    
-    value = GetGpioPinValue(GPIO_03);    
-    
-    printk("GPIO_03 level = 0x%x\n", value);    
-        
-    return IRQ_HANDLED;
-}
 
 
 #endif

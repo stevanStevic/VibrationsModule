@@ -10,6 +10,101 @@ static int devices_to_destroy;
 /* IRQ number. */
 static int irq_gpio3 = -1;
 
+static irqreturn_t h_irq_gpio3(int irq, void *data)
+{
+    static char value = -1;
+
+    //printk("Interrupt from IRQ 0x%x\n", irq);    
+    
+    value = GetGpioPinValue(GPIO_03);
+    
+    printk("GPIO_03 level = %d\n", value);    //0x%x
+        
+    return IRQ_HANDLED;
+}
+
+ssize_t vibration_driver_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
+{
+	/* Driver has no functionality for writing */
+
+	return 0;
+}
+
+ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count, 
+	loff_t *f_pos)
+{
+	Device* dev = (Device*)filp->private_data;
+	ssize_t retval = 0;
+	
+	if (mutex_lock_killable(&dev->dev_mutex))
+		return -EINTR;
+	
+	if (*f_pos >= BUFF_LEN) /* EOF */
+		goto out;
+	
+	if (*f_pos + count > BUFF_LEN)
+		count = BUFF_LEN - *f_pos;
+	
+	if (count > BLOCK_LEN)
+		count = BLOCK_LEN;
+	
+	if (copy_to_user(buf, &(dev->data[*f_pos]), count) != 0)
+	{
+		retval = -EFAULT;
+		goto out;
+	}
+	
+	*f_pos += count;
+	retval = count;
+	
+out:
+	mutex_unlock(&dev->dev_mutex);
+	return retval;
+}
+
+int vibration_driver_release(struct inode* inode, struct file* filp) {
+
+	return 0;
+}
+
+int vibration_driver_open(struct inode* inode, struct file* filp)
+{
+	int mjn;
+	int mnn;
+	Device *dev;
+
+	mjn = imajor(inode);
+	mnn = iminor(inode);
+
+	/* <major, minor> validation */
+	if(mjn != major_number || mnn < 0 || mnn > MAXDEVICES) {
+		printk(KERN_WARNING "No device found with minor=%d and major=%d\n", mjn, mnn);
+		return -ENODEV; /* No such device */
+	}
+
+	dev = &devices[mnn];
+	filp->private_data = dev; 	//Saving device for other functions
+
+	if (inode->i_cdev != &(dev->c_dev))
+	{
+		printk(KERN_WARNING "open(): internal error\n");
+		return -ENODEV; /* No such device */
+	}
+
+	/* Memory allocation for data if first time opened */
+	if (dev->data == NULL)
+	{
+		dev->data = (unsigned char*)kmalloc(BUFF_LEN, GFP_KERNEL);
+		if (dev->data == NULL)
+		{
+			printk(KERN_WARNING "open(): out of memory\n");
+			return -ENOMEM;
+		}
+	}
+
+	return 0;
+}
+
 static int construct_device(Device* dev, int minor, struct class *class)
 {
 	int err;
@@ -93,6 +188,17 @@ int vibration_driver_init(void)
 			goto error;
 		}	
 	}
+
+	SetInternalPullUpDown(GPIO_03, PULL_UP);
+	SetGpioPinDirection(GPIO_03, GPIO_DIRECTION_IN);
+
+	gpio_request_one(GPIO_03, GPIOF_IN, "irq_gpio3");
+    irq_gpio3 = gpio_to_irq(GPIO_03);    
+    if( (request_irq(irq_gpio3, h_irq_gpio3, IRQF_TRIGGER_FALLING, "irq_gpio3", (void *)(h_irq_gpio3))) != 0)
+    {
+        printk("Error: ISR not registered!\n");
+    }        
+
 	return 0;	//Success
 
 error:
@@ -104,6 +210,9 @@ error:
 void vibration_driver_exit(void) 
 {
 	int i;
+
+	/* Clear GPIO pins. */
+    SetInternalPullUpDown(GPIO_03, PULL_NONE);
 
 	if (devices) {
 		for (i = 0; i < devices_to_destroy; i++) {
@@ -127,11 +236,6 @@ void vibration_driver_exit(void)
 	
     printk(KERN_ALERT "Devices unregistered\n");
 }
-
-static int vibration_driver_open(struct inode *inode, struct file *filp) {return 0;}
-static int vibration_driver_release(struct inode *inode, struct file *filp) {return 0;}
-static ssize_t vibration_driver_read(struct file *filp, char *buf, size_t len, loff_t *f_pos) {return 0;}
-static ssize_t vibration_driver_write(struct file *filp, const char *buf, size_t len, loff_t *f_pos) {return 0;}
 
 module_init(vibration_driver_init);
 module_exit(vibration_driver_exit);
