@@ -42,17 +42,21 @@ enum hrtimer_restart blink_timer_callback(struct hrtimer *param)
 
 static irqreturn_t h_irq_gpio(int irq, void *data)
 {
-#ifdef DEBUG
-    printk("Interrupt from IRQ 0x%x\n", irq);    
-#endif
-
-	Device* dev = (Device*)(data);
+//  printk("Interrupt from IRQ 0x%x\n", irq);    
+	int end_time;
+	Device* dev;
+	
+	dev = (Device*)(data);
 
 	/* Period is current time - prevoius time that interrupt occured */	
-	dev->period = current_time - dev->timestamp;
-	printk(KERN_INFO "Period: %d\n", dev->period);
+	end_time = current_time;
+	dev->period = end_time - dev->timestamp;
 
-	dev->timestamp = current_time;
+#ifdef DEBUG	
+	printk(KERN_INFO "PERIOD: %d\n", dev->period);
+#endif
+ 
+	dev->timestamp = end_time;
         
     return IRQ_HANDLED;
 }
@@ -69,11 +73,14 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 {
 	Device* dev = (Device*)filp->private_data;
 	ssize_t retval = 0;
+	//int cnt = 0;
+	//int temp;
 	
+	/*
 	if (mutex_lock_killable(&dev->dev_mutex))
 		return -EINTR;
 	
-	if (*f_pos >= BUFF_LEN) /* EOF */
+	if (*f_pos >= BUFF_LEN) //EOF
 		goto out;
 	
 	if (*f_pos + count > BUFF_LEN)
@@ -81,8 +88,10 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	
 	if (count > BLOCK_LEN)
 		count = BLOCK_LEN;
-	
-	if (copy_to_user(buf, (char*)&(dev->period), 4) != 0)
+	*/
+
+	//printk(KERN_INFO "period: %d\n", dev->period);
+	if (copy_to_user(buf, &dev->period, 4) != 0)
 	{
 		retval = -EFAULT;
 		goto out;

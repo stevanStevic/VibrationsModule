@@ -29,7 +29,7 @@
 #include <asm/uaccess.h>
 
 /* Allowing to print kernel messages */
-#define DEBUG
+//#define DEBUG
 
 /* Documentation info */
 #define DRIVER_AUTHOR "Stevan Stevic"
