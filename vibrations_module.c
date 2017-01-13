@@ -19,9 +19,6 @@ static long long current_time = 0;
 static int do_GPIO_pins[4] = {GPIO_02, GPIO_03, GPIO_18, GPIO_22};
 static int argc =  0;
 
-/* IRQ number. */
-static int irq_gpio = -1;
-
 /*
 * module_param_array(variable_name, data_type, num, perm);
 * The first param is the parameter's (in this case the array's) name.
@@ -53,6 +50,7 @@ static irqreturn_t h_irq_gpio(int irq, void *data)
 
 	/* Period is current time - prevoius time that interrupt occured */	
 	dev->period = current_time - dev->timestamp;
+	printk(KERN_INFO "Period: %d\n", dev->period);
 
 	dev->timestamp = current_time;
         
@@ -84,7 +82,7 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	if (count > BLOCK_LEN)
 		count = BLOCK_LEN;
 	
-	if (copy_to_user(buf, &(dev->data[*f_pos]), count) != 0)
+	if (copy_to_user(buf, (char*)&(dev->period), 4) != 0)
 	{
 		retval = -EFAULT;
 		goto out;
@@ -247,8 +245,8 @@ int vibration_driver_init(void)
 
 		/* Enabling interrupts */
 		gpio_request_one(do_GPIO_pins[i], GPIOF_IN, "irq_gpio");
-    	irq_gpio = gpio_to_irq(do_GPIO_pins[i]);    
-		err = request_irq(irq_gpio, h_irq_gpio, IRQF_TRIGGER_FALLING, "irq_gpio", (void *)&devices[i]);	//devices[i] as data parametar for interrupt 
+		devices[i].irq_gpio = gpio_to_irq(do_GPIO_pins[i]);    
+		err = request_irq(devices[i].irq_gpio, h_irq_gpio, IRQF_TRIGGER_FALLING, "irq_gpio", (void *)&devices[i]);	//devices[i] as data parametar for interrupt 
     	if( err ) {
        		printk("Error: ISR %d not registered!\n", do_GPIO_pins[i]);
    		}        
@@ -273,6 +271,10 @@ void vibration_driver_exit(void)
 
 	/* Clear GPIO pins. */
 	for(i = 0; i < MAXDEVICES; i++) {
+		disable_irq(devices[i].irq_gpio);
+    	free_irq(devices[i].irq_gpio, (void *)&devices[i]);
+    	gpio_free(do_GPIO_pins[i]);
+
     	SetInternalPullUpDown(do_GPIO_pins[i], PULL_NONE);
 	}
 
@@ -299,10 +301,11 @@ void vibration_driver_exit(void)
 	if(cl)
 		class_destroy(cl);
 
-	/* vibration_driver_exit() is never called if registration failed */
+	/* vibration_driver_exit() is never called if registration fails */
 	unregister_chrdev_region(MKDEV(major_number, 0), MAXDEVICES);
 	
     printk(KERN_ALERT "Devices unregistered\n");
+	return;
 }
 
 module_init(vibration_driver_init);
