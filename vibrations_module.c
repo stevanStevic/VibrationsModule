@@ -282,7 +282,8 @@ void vibration_driver_exit(void)
 	if (devices) {
 		numOfIterations = devices_to_destroy ? devices_to_destroy : MAXDEVICES;
  
-		for (i = 0; i < devices_to_destroy; i++) {
+		printk(KERN_INFO "Devices to des: %d, num of iter: %d", devices_to_destroy, numOfIterations);
+		for (i = 0; i < numOfIterations; i++) {
 			device_destroy(cl, MKDEV(major_number, i));
 			cdev_del(&(devices[i].c_dev));
 			kfree(devices[i].data);
