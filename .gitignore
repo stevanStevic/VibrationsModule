@@ -35,4 +35,9 @@ ui_*.h
 # QtCtreator CMake
 CMakeLists.txt.user
 
+*.cmd
+*.mod*
+*.ko
+*.order
+*.symvers
 .tmp_versions

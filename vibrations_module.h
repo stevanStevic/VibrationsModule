@@ -28,14 +28,14 @@
 #include <asm/io.h>
 #include <asm/uaccess.h>
 
-/* Allowing to print kernel messages */
+/* To allow kernel messages printing uncomment this */
 //#define DEBUG
 
 /* Documentation info */
 #define DRIVER_AUTHOR "Stevan Stevic"
 #define DRIVER_DESC "Simple driver that handles up to 4 vibration sensor (SW-420) or similar"
 
-#define MAXDEVICES 4
+#define MAX_DEVICES 4
 #define DEVICE_NAME "vibrato"
 
 #define BUFF_LEN 1024

@@ -13,11 +13,22 @@ static ktime_t kt;
 static long long current_time = 0;
 
 #define TIMER_SEC    0
-#define TIMER_NANO_SEC  1*1000*1000 /* 250ms */
+#define TIMER_NANO_SEC  1*1000*1000 /* 1 ms */
 
-/* Default GPIO pins if no arguments passed */
-static int do_GPIO_pins[4] = {GPIO_02, GPIO_03, GPIO_18, GPIO_22};
-static int argc =  0;
+/* Default GPIO pins if no arguments passed */ 
+static int devices_to_create	= 1;
+static int di_GPIO_pins[4] 		= {GPIO_02, GPIO_03, GPIO_18, GPIO_22};
+static int argc 				= 0;
+
+/*
+* module_param(variable_name, data_type, 0000)
+* The first param is the parameters name.
+* The second param is it's data type.
+* The final argument is the permissions bits.
+* (For exposing parameters in sysfs (if non−zero) at a later stage)
+*/
+module_param(devices_to_create, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+MODULE_PARM_DESC(devices_to_create, "Number of device nodes to create.");
 
 /*
 * module_param_array(variable_name, data_type, num, perm);
@@ -27,8 +38,8 @@ static int argc =  0;
 * of elements of the array initialized by the user at module loading time.
 * The fourth argument is the permission bits.
 */
-module_param_array(do_GPIO_pins, int, &argc, 0000);
-MODULE_PARM_DESC(do_GPIO_pins, "Array of GPIO pins were DO pin of SW-420 vibration sensor is connected.");
+module_param_array(di_GPIO_pins, int, &argc, 0000);
+MODULE_PARM_DESC(di_GPIO_pins, "Array of GPIO pins were DO pin of SW-420 vibration sensor is connected.");
 
 enum hrtimer_restart blink_timer_callback(struct hrtimer *param)
 {
@@ -73,10 +84,11 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 {
 	Device* dev = (Device*)filp->private_data;
 	ssize_t retval = 0;
-	//int cnt = 0;
-	//int temp;
-	
 	/*
+	int cnt = 0;
+	int temp;
+	
+	
 	if (mutex_lock_killable(&dev->dev_mutex))
 		return -EINTR;
 	
@@ -120,7 +132,7 @@ int vibration_driver_open(struct inode* inode, struct file* filp)
 	mnn = iminor(inode);
 
 	/* <major, minor> validation */
-	if(mjn != major_number || mnn < 0 || mnn > MAXDEVICES) {
+	if(mjn != major_number || mnn < 0 || mnn > devices_to_create) {
 		printk(KERN_WARNING "No device found with minor=%d and major=%d\n", mjn, mnn);
 		return -ENODEV; /* No such device */
 	}
@@ -182,7 +194,7 @@ int construct_device(Device* dev, int minor, struct class *class)
 		cdev_del(&(dev->c_dev));
 	}
 #ifdef DEBUG
-	printk(KERN_INFO "Device files created\n");
+	printk(KERN_INFO "Device %d file created\n", minor);
 #endif
 
 	return 0;
@@ -197,11 +209,18 @@ int vibration_driver_init(void)
 	devices_to_destroy = 0;
 	err = 0;
 
+	/* Parse arguments */
+	if( devices_to_create > MAX_DEVICES ) {
+		devices_to_create = MAX_DEVICES;
+	} else if(devices_to_create < 1) {
+		devices_to_create = 1;
+	}
+
 	/* Asking to register driver at some available major device number
 	 * starting with minor device number one, 
-	 * and asking for a MAXDEVICES number of minor numbers.  
+	 * and asking for a devices_to_create number of minor numbers.  
 	 */
-	err = alloc_chrdev_region(&t_dev, 0, MAXDEVICES, DEVICE_NAME);
+	err = alloc_chrdev_region(&t_dev, 0, devices_to_create, DEVICE_NAME);
 	if(err) {
 		printk( KERN_ALERT "Device Registration failed\n" );
         return -1;
@@ -221,14 +240,14 @@ int vibration_driver_init(void)
         goto error;
     }
 	
-	devices = (Device*)kmalloc(MAXDEVICES * sizeof(Device), GFP_KERNEL);
+	devices = (Device*)kmalloc(devices_to_create * sizeof(Device), GFP_KERNEL);
 	if( devices == NULL) {
 		printk( KERN_ALERT "Memory allocation for devices failed\n" );
 		goto error;	
 	}
 	
 	/* Creating devices one by one */
-	for(i = 0; i < MAXDEVICES; i++) {
+	for(i = 0; i < devices_to_create; i++) {
 		err = construct_device(&devices[i], i, cl);
 		if(err) {
 			printk(KERN_ALERT "Creation of devices failed\n" );
@@ -247,23 +266,25 @@ int vibration_driver_init(void)
 	printk(KERN_INFO "Timer is set\n");
 #endif   
 
-	for(i = 0; i < MAXDEVICES; i++) {
+	for(i = 0; i < devices_to_create; i++) {
 		/* Setting pin direction to INPUT */
-		SetInternalPullUpDown(do_GPIO_pins[i], PULL_UP);
-		SetGpioPinDirection(do_GPIO_pins[i], GPIO_DIRECTION_IN);
+		SetInternalPullUpDown(di_GPIO_pins[i], PULL_UP);
+		SetGpioPinDirection(di_GPIO_pins[i], GPIO_DIRECTION_IN);
 
 		/* Enabling interrupts */
-		gpio_request_one(do_GPIO_pins[i], GPIOF_IN, "irq_gpio");
-		devices[i].irq_gpio = gpio_to_irq(do_GPIO_pins[i]);    
+		gpio_request_one(di_GPIO_pins[i], GPIOF_IN, "irq_gpio");
+		devices[i].irq_gpio = gpio_to_irq(di_GPIO_pins[i]);    
 		err = request_irq(devices[i].irq_gpio, h_irq_gpio, IRQF_TRIGGER_FALLING, "irq_gpio", (void *)&devices[i]);	//devices[i] as data parametar for interrupt 
     	if( err ) {
-       		printk("Error: ISR %d not registered!\n", do_GPIO_pins[i]);
+       		printk("Error: ISR %d not registered!\n", di_GPIO_pins[i]);
    		}        
 	}
 
 #ifdef DEBUG
 	printk(KERN_INFO "GPIO pins set successfully\n");
-#endif   
+#endif 
+
+	printk(KERN_INFO "Vibration driver is successfully inserted\n");
 
 	return 0;	//Success
 
@@ -276,25 +297,27 @@ error:
 void vibration_driver_exit(void) 
 {
 	int i;
-	int numOfIterations;
+	int num_of_iterations;
 
-	/* Clear GPIO pins. */
-	for(i = 0; i < MAXDEVICES; i++) {
+	/* Clear GPIO pins and disable IRQs */
+	for(i = 0; i < devices_to_create; i++) {
 		disable_irq(devices[i].irq_gpio);
-    	free_irq(devices[i].irq_gpio, (void *)&devices[i]);
-    	gpio_free(do_GPIO_pins[i]);
+		free_irq(devices[i].irq_gpio, (void *)&devices[i]);
+		gpio_free(di_GPIO_pins[i]);
 
-    	SetInternalPullUpDown(do_GPIO_pins[i], PULL_NONE);
+		SetInternalPullUpDown(di_GPIO_pins[i], PULL_NONE);
 	}
 
 	/* Timer destroy */
 	hrtimer_cancel(&blink_timer);    
 
 	if (devices) {
-		numOfIterations = devices_to_destroy ? devices_to_destroy : MAXDEVICES;
- 
-		printk(KERN_INFO "Devices to des: %d, num of iter: %d", devices_to_destroy, numOfIterations);
-		for (i = 0; i < numOfIterations; i++) {
+		num_of_iterations = devices_to_destroy ? devices_to_destroy : devices_to_create;
+
+#ifdef DEBUG
+		printk(KERN_INFO "Devices to destroy: %d, and number of iterations: %d", devices_to_destroy, num_of_iterations);
+#endif 		
+		for (i = 0; i < num_of_iterations; i++) {
 			device_destroy(cl, MKDEV(major_number, i));
 			cdev_del(&(devices[i].c_dev));
 			kfree(devices[i].data);
@@ -307,13 +330,15 @@ void vibration_driver_exit(void)
 	printk(KERN_INFO "Devices are destroyed\n");
 #endif
 
-	if(cl)
+	if(cl) {
 		class_destroy(cl);
+	}
 
 	/* vibration_driver_exit() is never called if registration fails */
-	unregister_chrdev_region(MKDEV(major_number, 0), MAXDEVICES);
+	unregister_chrdev_region(MKDEV(major_number, 0), devices_to_create);
 	
-    printk(KERN_ALERT "Devices unregistered\n");
+    printk(KERN_INFO "Vibration driver is successfully removed\n");
+
 	return;
 }
 
@@ -330,6 +355,5 @@ MODULE_DESCRIPTION(DRIVER_DESC);    /* What does this module do */
 * The MODULE_SUPPORTED_DEVICE macro might be used in the future to help
 * automatic configuration of modules, but is currently unused other than
 * for documentation purposes.
-
-MODULE_SUPPORTED_DEVICE("Supported device: devA, devB, etc.");
 */
+MODULE_SUPPORTED_DEVICE("Supported device: Raspberry Pi 2");
