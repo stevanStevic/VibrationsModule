@@ -72,6 +72,10 @@ static irqreturn_t h_irq_gpio(int irq, void *data)
     return IRQ_HANDLED;
 }
 
+static int vibration_driver_ioctl(struct inode *inode, struct file *file, unsigned int ioctl_num, unsigned long ioctl_param) {
+
+}
+
 ssize_t vibration_driver_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
 {
 	/* Driver has no functionality for writing */
@@ -84,7 +88,7 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 {
 	Device* dev = (Device*)filp->private_data;
 	ssize_t retval = 0;
-	/*
+	
 	int cnt = 0;
 	int temp;
 	
@@ -100,7 +104,7 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	
 	if (count > BLOCK_LEN)
 		count = BLOCK_LEN;
-	*/
+	
 
 	//printk(KERN_INFO "period: %d\n", dev->period);
 	if (copy_to_user(buf, &dev->period, 4) != 0)
@@ -270,14 +274,6 @@ int vibration_driver_init(void)
 		/* Setting pin direction to INPUT */
 		SetInternalPullUpDown(di_GPIO_pins[i], PULL_UP);
 		SetGpioPinDirection(di_GPIO_pins[i], GPIO_DIRECTION_IN);
-
-		/* Enabling interrupts */
-		gpio_request_one(di_GPIO_pins[i], GPIOF_IN, "irq_gpio");
-		devices[i].irq_gpio = gpio_to_irq(di_GPIO_pins[i]);    
-		err = request_irq(devices[i].irq_gpio, h_irq_gpio, IRQF_TRIGGER_FALLING, "irq_gpio", (void *)&devices[i]);	//devices[i] as data parametar for interrupt 
-    	if( err ) {
-       		printk("Error: ISR %d not registered!\n", di_GPIO_pins[i]);
-   		}        
 	}
 
 #ifdef DEBUG
@@ -299,12 +295,8 @@ void vibration_driver_exit(void)
 	int i;
 	int num_of_iterations;
 
-	/* Clear GPIO pins and disable IRQs */
+	/* Clear GPIO pins */
 	for(i = 0; i < devices_to_create; i++) {
-		disable_irq(devices[i].irq_gpio);
-		free_irq(devices[i].irq_gpio, (void *)&devices[i]);
-		gpio_free(di_GPIO_pins[i]);
-
 		SetInternalPullUpDown(di_GPIO_pins[i], PULL_NONE);
 	}
 

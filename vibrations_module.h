@@ -9,6 +9,7 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 #include <linux/fcntl.h>
+#include <linux/ioctl.h>
 #include <linux/errno.h>
 #include <linux/err.h>
 #include <linux/device.h>	
@@ -19,14 +20,13 @@
 
 #include <linux/ktime.h>
 #include <linux/hrtimer.h>
-#include <linux/interrupt.h>
+//#include <linux/interrupt.h>
 #include <linux/gpio.h>
 
 #include <linux/mutex.h>
 
 #include <asm/uaccess.h>
 #include <asm/io.h>
-#include <asm/uaccess.h>
 
 /* To allow kernel messages printing uncomment this */
 //#define DEBUG
@@ -57,6 +57,7 @@ static int vibration_driver_open(struct inode*, struct file*);
 static int vibration_driver_release(struct inode*, struct file*);
 static ssize_t vibration_driver_read(struct file*, char* buf, size_t , loff_t*);
 static ssize_t vibration_driver_write(struct file*, const char* buf, size_t , loff_t*);
+static int vibration_driver_ioctl(struct inode *inode, struct file *file, unsigned int ioctl_num, unsigned long ioctl_param);
 
 /* Declartaion of internal driver functions */
 static int construct_device(Device* dev, int minor, struct class *class);
@@ -69,7 +70,8 @@ struct file_operations driver_fops =
     open    :   vibration_driver_open,
     release :   vibration_driver_release,
     read    :   vibration_driver_read,
-    write   :   vibration_driver_write
+    write   :   vibration_driver_write,
+	ioctl	:	vibration_driver_ioctl
 };
 
 #endif
