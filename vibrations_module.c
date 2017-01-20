@@ -1,14 +1,21 @@
 #include "rpiGPIOManipulation.h"
 #include "vibrations_module.h"
 
+/* Global flags */
+/* Flag for mode setting. 
+ * 0 is for setting frequency and sampling.
+ * 1 is for returning period */
+static int mode;
+
 /* Global variables of the module*/
 static Device* devices;
 static struct class *cl;
 static int major_number;
 static int devices_to_destroy;
+static int frequency;
 
 /* Timer variables */
-static struct hrtimer blink_timer;
+static struct hrtimer period_timer;
 static ktime_t kt;
 static long long current_time = 0;
 
@@ -41,11 +48,12 @@ MODULE_PARM_DESC(devices_to_create, "Number of device nodes to create.");
 module_param_array(di_GPIO_pins, int, &argc, 0000);
 MODULE_PARM_DESC(di_GPIO_pins, "Array of GPIO pins were DO pin of SW-420 vibration sensor is connected.");
 
-enum hrtimer_restart blink_timer_callback(struct hrtimer *param)
+
+enum hrtimer_restart period_timer_callback(struct hrtimer *param)
 {
 	current_time++;
 
-    hrtimer_forward(&blink_timer, ktime_get(), kt);
+    hrtimer_forward(&period_timer, ktime_get(), kt);
     
     return HRTIMER_RESTART;
 }
@@ -72,8 +80,25 @@ static irqreturn_t h_irq_gpio(int irq, void *data)
     return IRQ_HANDLED;
 }
 
-static int vibration_driver_ioctl(struct inode *inode, struct file *file, unsigned int ioctl_num, unsigned long ioctl_param) {
+static long vibration_driver_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	switch(cmd) {
+	case 0:
+		//Set mode for sampling with given frequency
+ 		mode = 0;
+		frequency = *(int*)arg;
+		frequency = (1000 * 1000) / frequency; 	// How much us is needed
+		frequency *= 1000; 						// Set us in nano s for timer
 
+		kt = ktime_set(TIMER_SEC, frequency);  	// Set timer	
+		break;
+	case 1:
+		//Set mode to return period
+		mode = 1;
+		break;
+	}
+
+	return 0;
 }
 
 ssize_t vibration_driver_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
@@ -86,35 +111,48 @@ ssize_t vibration_driver_write(struct file *filp, const char __user *buf, size_t
 ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count, 
 	loff_t *f_pos)
 {
+	/*hrtimer_start(&period_timer, kt, HRTIMER_MODE_REL); */
 	Device* dev = (Device*)filp->private_data;
 	ssize_t retval = 0;
 	
-	int cnt = 0;
-	int temp;
-	
-	
-	if (mutex_lock_killable(&dev->dev_mutex))
-		return -EINTR;
-	
-	if (*f_pos >= BUFF_LEN) //EOF
-		goto out;
-	
-	if (*f_pos + count > BUFF_LEN)
-		count = BUFF_LEN - *f_pos;
-	
-	if (count > BLOCK_LEN)
-		count = BLOCK_LEN;
+	//int cnt = 0;
+	//int temp;
 	
 
-	//printk(KERN_INFO "period: %d\n", dev->period);
-	if (copy_to_user(buf, &dev->period, 4) != 0)
-	{
-		retval = -EFAULT;
-		goto out;
-	}
+	//OVDE SI STAO
+	if(mode) {
+		/* Returning period of the signal */ 
+		if (copy_to_user(buf, &dev->period, 4) != 0)
+		{
+			retval = -EFAULT;
+			goto out;
+		}
+	} else {
+		hrtimer_start(&period_timer, kt, HRTIMER_MODE_REL);
+
+		if (mutex_lock_killable(&dev->dev_mutex))
+			return -EINTR;
 	
-	*f_pos += count;
-	retval = count;
+		if (*f_pos >= BUFF_LEN) //EOF
+			goto out;
+	
+		if (*f_pos + count > BUFF_LEN)
+			count = BUFF_LEN - *f_pos;
+	
+		if (count > BLOCK_LEN)
+			count = BLOCK_LEN;
+	
+
+		//printk(KERN_INFO "period: %d\n", dev->period);
+		if (copy_to_user(buf, &dev->period, 4) != 0)
+		{
+			retval = -EFAULT;
+			goto out;
+		}
+	
+		*f_pos += count;
+		retval = count;
+	}
 	
 out:
 	mutex_unlock(&dev->dev_mutex);
@@ -210,8 +248,10 @@ int vibration_driver_init(void)
 	int err;
 	dev_t t_dev;
 
-	devices_to_destroy = 0;
 	err = 0;
+	devices_to_destroy = 0;
+	mode = 0;
+	frequency = 125 * 1000; 	// Sampling rate 8kHz = 125 us
 
 	/* Parse arguments */
 	if( devices_to_create > MAX_DEVICES ) {
@@ -261,10 +301,10 @@ int vibration_driver_init(void)
 	}
 
 	/* Initialize high resolution timer. */
-    hrtimer_init(&blink_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-    kt = ktime_set(TIMER_SEC, TIMER_NANO_SEC);    
-    blink_timer.function = &blink_timer_callback;
-    hrtimer_start(&blink_timer, kt, HRTIMER_MODE_REL); 
+    hrtimer_init(&period_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    kt = ktime_set(TIMER_SEC, frequency);    
+    period_timer.function = &period_timer_callback;
+	hrtimer_start(&period_timer, kt, HRTIMER_MODE_REL);
 
 #ifdef DEBUG
 	printk(KERN_INFO "Timer is set\n");
@@ -274,7 +314,15 @@ int vibration_driver_init(void)
 		/* Setting pin direction to INPUT */
 		SetInternalPullUpDown(di_GPIO_pins[i], PULL_UP);
 		SetGpioPinDirection(di_GPIO_pins[i], GPIO_DIRECTION_IN);
-	}
+
+		/* Enabling interrupts */
+		gpio_request_one(di_GPIO_pins[i], GPIOF_IN, "irq_gpio");
+		devices[i].irq_gpio = gpio_to_irq(di_GPIO_pins[i]);    
+		err = request_irq(devices[i].irq_gpio, h_irq_gpio, IRQF_TRIGGER_FALLING, "irq_gpio", (void *)&devices[i]);	//devices[i] as data parametar for interrupt 
+    	if( err ) {
+       		printk("Error: ISR %d not registered!\n", di_GPIO_pins[i]);
+   		}        
+	}	
 
 #ifdef DEBUG
 	printk(KERN_INFO "GPIO pins set successfully\n");
@@ -295,13 +343,17 @@ void vibration_driver_exit(void)
 	int i;
 	int num_of_iterations;
 
-	/* Clear GPIO pins */
+	/* Clear GPIO pins and disable IRQs */
 	for(i = 0; i < devices_to_create; i++) {
+		disable_irq(devices[i].irq_gpio);
+		free_irq(devices[i].irq_gpio, (void *)&devices[i]);
+		gpio_free(di_GPIO_pins[i]);
+
 		SetInternalPullUpDown(di_GPIO_pins[i], PULL_NONE);
 	}
 
 	/* Timer destroy */
-	hrtimer_cancel(&blink_timer);    
+	hrtimer_cancel(&period_timer);    
 
 	if (devices) {
 		num_of_iterations = devices_to_destroy ? devices_to_destroy : devices_to_create;

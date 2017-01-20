@@ -20,7 +20,7 @@
 
 #include <linux/ktime.h>
 #include <linux/hrtimer.h>
-//#include <linux/interrupt.h>
+#include <linux/interrupt.h>
 #include <linux/gpio.h>
 
 #include <linux/mutex.h>
@@ -57,21 +57,21 @@ static int vibration_driver_open(struct inode*, struct file*);
 static int vibration_driver_release(struct inode*, struct file*);
 static ssize_t vibration_driver_read(struct file*, char* buf, size_t , loff_t*);
 static ssize_t vibration_driver_write(struct file*, const char* buf, size_t , loff_t*);
-static int vibration_driver_ioctl(struct inode *inode, struct file *file, unsigned int ioctl_num, unsigned long ioctl_param);
+static long vibration_driver_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 /* Declartaion of internal driver functions */
 static int construct_device(Device* dev, int minor, struct class *class);
-static enum hrtimer_restart blink_timer_callback(struct hrtimer *param);
+static enum hrtimer_restart period_timer_callback(struct hrtimer *param);
 static irqreturn_t h_irq_gpio(int irq, void *data);
 
 /* Structure that declares the usual file access functions. */
 struct file_operations driver_fops =
 {
-    open    :   vibration_driver_open,
-    release :   vibration_driver_release,
-    read    :   vibration_driver_read,
-    write   :   vibration_driver_write,
-	ioctl	:	vibration_driver_ioctl
+    open			:   vibration_driver_open,
+    release 		:   vibration_driver_release,
+    read 			:   vibration_driver_read,
+    write   		:   vibration_driver_write,
+	unlocked_ioctl	:	vibration_driver_ioctl
 };
 
 #endif
