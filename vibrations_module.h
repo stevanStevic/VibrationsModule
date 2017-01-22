@@ -43,6 +43,7 @@
 
 typedef struct device_st {
 	unsigned char *data;
+	unsigned int sample;	// Used as index od data buff when sampling signal
 	unsigned int period;
 	unsigned int timestamp;
 	struct mutex dev_mutex;
