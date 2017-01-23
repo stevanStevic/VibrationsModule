@@ -12,7 +12,7 @@ static Device* devices;
 static struct class *cl;
 static int major_number;
 static int devices_to_destroy;
-static int frequency;
+static unsigned int frequency;
 
 /* Timer variables */
 
@@ -61,6 +61,8 @@ enum hrtimer_restart sampling_timer_callback(struct hrtimer *param)
 {
 	devices[0].data[devices[0].sample++] = GetGpioPinValue(di_GPIO_pins[0]);
 
+	//printk(KERN_INFO "%d \n", devices[0].data[devices[0].sample]);
+
 	if(devices[0].sample == BUFF_LEN) {
 		wake_up(&wq);
 	}
@@ -108,7 +110,7 @@ static long vibration_driver_ioctl(struct file *filp, unsigned int cmd, unsigned
 	case 0:
 		//Set mode for sampling with given frequency
  		mode = 0;
-		frequency = *(int*)arg;
+		frequency = (unsigned int)arg;
 		frequency = (1000 * 1000) / frequency; 	// How much us is needed
 		frequency *= 1000; 						// Set us in nano s for timer
 
@@ -163,12 +165,10 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 		if (*f_pos + count > BUFF_LEN)
 			count = BUFF_LEN - *f_pos;
 	
-		if (count > BLOCK_LEN)
+		/*if (count > BLOCK_LEN)
 			count = BLOCK_LEN;
-	
-
-		//printk(KERN_INFO "period: %d\n", dev->period);
-		if (copy_to_user(buf, dev->data, dev->sample) != 0)
+		*/
+		if (copy_to_user(buf, dev->data, count) != 0)
 		{
 			retval = -EFAULT;
 			goto out;
@@ -176,8 +176,7 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	
 		*f_pos += count;
 		retval = count;
-
-		
+	
 		// Reset index for next sampling
 		dev->sample = 0;
 	}
@@ -222,7 +221,7 @@ int vibration_driver_open(struct inode* inode, struct file* filp)
 	/* Memory allocation for data if first time opened */
 	if (dev->data == NULL)
 	{
-		dev->data = (unsigned char*)kmalloc(BUFF_LEN, GFP_KERNEL);
+		dev->data = (unsigned char*)kzalloc(BUFF_LEN, GFP_KERNEL);
 		if (dev->data == NULL)
 		{
 			printk(KERN_WARNING "open(): out of memory\n");
