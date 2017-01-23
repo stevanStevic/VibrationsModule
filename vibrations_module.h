@@ -15,7 +15,6 @@
 #include <linux/device.h>	
 #include <linux/cdev.h>
 #include <linux/proc_fs.h>
-#include <linux/string.h>
 #include <linux/ioport.h>
 
 #include <linux/ktime.h>
@@ -24,6 +23,8 @@
 #include <linux/gpio.h>
 
 #include <linux/mutex.h>
+#include <linux/wait.h>
+#include <linux/sched.h>
 
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -62,6 +63,7 @@ static long vibration_driver_ioctl(struct file *filp, unsigned int cmd, unsigned
 
 /* Declartaion of internal driver functions */
 static int construct_device(Device* dev, int minor, struct class *class);
+static enum hrtimer_restart sampling_timer_callback(struct hrtimer *param);
 static enum hrtimer_restart period_timer_callback(struct hrtimer *param);
 static irqreturn_t h_irq_gpio(int irq, void *data);
 
