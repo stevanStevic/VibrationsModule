@@ -61,8 +61,6 @@ enum hrtimer_restart sampling_timer_callback(struct hrtimer *param)
 {
 	devices[0].data[devices[0].sample++] = GetGpioPinValue(di_GPIO_pins[0]);
 
-	//printk(KERN_INFO "%d \n", devices[0].data[devices[0].sample]);
-
 	if(devices[0].sample == BUFF_LEN) {
 		wake_up(&wq);
 	}
@@ -83,7 +81,6 @@ enum hrtimer_restart period_timer_callback(struct hrtimer *param)
 
 static irqreturn_t h_irq_gpio(int irq, void *data)
 {
-//  printk("Interrupt from IRQ 0x%x\n", irq);    
 	int end_time;
 	int t_period;
 	Device* dev;
@@ -140,13 +137,12 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	
 	if(mode) {
 		/* Returning period of the signal */ 
-		if (copy_to_user(buf, &dev->period, 4) != 0)
+		count = sizeof(unsigned int);
+		if (copy_to_user(buf, &dev->period, count) != 0)
 		{
 			retval = -EFAULT;
 			goto out;
 		}
-		*f_pos += count;
-		retval = count;
 	} else {
 		/* Signal sampling at given frequency */
 	
@@ -174,13 +170,13 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 			goto out;
 		}
 	
-		*f_pos += count;
-		retval = count;
-	
 		// Reset index for next sampling
 		dev->sample = 0;
 	}
 	
+	*f_pos += count;
+	retval = count;
+
 out:
 	mutex_unlock(&dev->dev_mutex);
 	return retval;
