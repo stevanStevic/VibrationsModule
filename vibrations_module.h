@@ -39,8 +39,7 @@
 #define MAX_DEVICES 4
 #define DEVICE_NAME "vibrato"
 
-#define BUFF_LEN 1024
-#define BLOCK_LEN 512
+#define BUFF_LEN 4096
 
 /* mode. 
  * 0 is for setting frequency and sampling.

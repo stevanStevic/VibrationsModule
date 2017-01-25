@@ -11,7 +11,7 @@ static int devices_to_destroy;
 
 // Period timer
 #define TIMER_SEC    0
-#define TIMER_NANO_SEC  125*1000 /* 1 ms */
+#define TIMER_NANO_SEC  1*1000*1000 /* 1 ms */
 
 static struct hrtimer period_timer;
 static ktime_t period_kt;
@@ -78,7 +78,7 @@ enum hrtimer_restart period_timer_callback(struct hrtimer *param)
 static irqreturn_t h_irq_gpio(int irq, void *data)
 {
 	int end_time;
-	int t_period;
+	unsigned short t_period;
 	int scaled_iir;
 	Device* dev;
 	
