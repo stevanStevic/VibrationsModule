@@ -50,7 +50,7 @@
 typedef struct device_st {
 	unsigned char *data;
 	unsigned int sample;
-	unsigned int period;
+	unsigned short period;
 	unsigned int timestamp;
 	unsigned int frequency;
 	struct hrtimer sampling_timer;	

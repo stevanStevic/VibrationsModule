@@ -11,7 +11,7 @@ static int devices_to_destroy;
 
 // Period timer
 #define TIMER_SEC    0
-#define TIMER_NANO_SEC  1*1000*1000 /* 1 ms */
+#define TIMER_NANO_SEC  125*1000 /* 1 ms */
 
 static struct hrtimer period_timer;
 static ktime_t period_kt;
@@ -79,6 +79,7 @@ static irqreturn_t h_irq_gpio(int irq, void *data)
 {
 	int end_time;
 	int t_period;
+	int scaled_iir;
 	Device* dev;
 	
 	dev = (Device*)(data);
@@ -86,8 +87,12 @@ static irqreturn_t h_irq_gpio(int irq, void *data)
 	/* Period is current time - prevoius time that interrupt occured */	
 	end_time = current_time;
 	t_period = end_time - dev->timestamp;
-	//dev->period = 9830 * t_period + 22937 * dev->period;
-	dev->period = t_period;
+	
+	// Average moving IIR filter scaled to integer - y1 = 0.3*x + 0.7*y0
+	scaled_iir = 9830 * t_period + 22937 * dev->period;
+
+	dev->period = scaled_iir >> 16;
+
 #ifdef DEBUG	
 	printk(KERN_INFO "PERIOD: %d\n", dev->period);
 #endif
@@ -141,7 +146,7 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	
 	if(dev->mode) {
 		/* Returning period of the signal */ 
-		count = sizeof(unsigned int);
+		count = sizeof(unsigned short);
 		if (copy_to_user(buf, &dev->period, count) != 0)
 		{
 			retval = -EFAULT;
