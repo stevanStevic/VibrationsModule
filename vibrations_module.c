@@ -1,18 +1,11 @@
 #include "rpiGPIOManipulation.h"
 #include "vibrations_module.h"
 
-/* Global flags */
-/* Flag for mode setting. 
- * 0 is for setting frequency and sampling.
- * 1 is for returning period */
-static int mode;
-
 /* Global variables of the module*/
 static Device* devices;
 static struct class *cl;
 static int major_number;
 static int devices_to_destroy;
-static unsigned int frequency;
 
 /* Timer variables */
 
@@ -24,16 +17,12 @@ static struct hrtimer period_timer;
 static ktime_t period_kt;
 static long long current_time = 0;
 
-// Sampling timer
-static struct hrtimer sampling_timer;
-static ktime_t sampling_kt;
-
 DECLARE_WAIT_QUEUE_HEAD(wq);
 
 /* Default GPIO pins if no arguments passed */ 
-static int devices_to_create	= 1;
-static int di_GPIO_pins[4] 		= {GPIO_02, GPIO_03, GPIO_18, GPIO_22};
-static int argc 				= 0;
+static int devices_to_create = 1;
+static int di_GPIO_pins[4] = {GPIO_02, GPIO_03, GPIO_18, GPIO_22};
+static int argc = 0;
 
 /*
 * module_param(variable_name, data_type, 0000)
@@ -59,19 +48,26 @@ MODULE_PARM_DESC(di_GPIO_pins, "Array of GPIO pins were DO pin of SW-420 vibrati
 
 enum hrtimer_restart sampling_timer_callback(struct hrtimer *param)
 {
-	devices[0].data[devices[0].sample++] = GetGpioPinValue(di_GPIO_pins[0]);
+	Device *dev;
+		
+	dev = container_of(param, Device, sampling_timer);
 
-	if(devices[0].sample == BUFF_LEN) {
+	/* Reading signal value. GPIO pin is indexed with MINOR number because, that number is linked with opened node */
+	dev->data[(dev->sample)++] = GetGpioPinValue( di_GPIO_pins[MINOR(dev->c_dev.dev)]);
+
+	/* If whole array is filled, timer needs to be stoped in read() function */
+	if(dev->sample == BUFF_LEN) {
 		wake_up(&wq);
 	}
 
-    hrtimer_forward(&sampling_timer, ktime_get(), sampling_kt);
+    hrtimer_forward(&dev->sampling_timer, ktime_get(), dev->sampling_kt);
     
     return HRTIMER_RESTART;
 }
 
 enum hrtimer_restart period_timer_callback(struct hrtimer *param)
 {
+	// Variable used for counting time
 	current_time++;
 
     hrtimer_forward(&period_timer, ktime_get(), period_kt);
@@ -103,19 +99,25 @@ static irqreturn_t h_irq_gpio(int irq, void *data)
 
 static long vibration_driver_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
+	unsigned int freq;
+	Device* dev;
+
+	dev = (Device*)filp->private_data;
+
 	switch(cmd) {
 	case 0:
-		//Set mode for sampling with given frequency
- 		mode = 0;
-		frequency = (unsigned int)arg;
-		frequency = (1000 * 1000) / frequency; 	// How much us is needed
-		frequency *= 1000; 						// Set us in nano s for timer
-
-		sampling_kt = ktime_set(TIMER_SEC, frequency);  	// Set timer	
+		//Set driver for sampling with given frequency
+ 		dev->mode = 0;
+		freq = (unsigned int)arg;
+		freq = (1000 * 1000) / freq; 	// How much us is needed
+		freq *= 1000; 					// Set us in nano s for timer
+		
+		dev->frequency = freq;
+		dev->sampling_kt = ktime_set(TIMER_SEC, dev->frequency);  	// Set timer	
 		break;
 	case 1:
-		//Set mode to return period
-		mode = 1;
+		//Set driver to return period
+		dev->mode = 1;
 		break;
 	}
 
@@ -132,10 +134,12 @@ ssize_t vibration_driver_write(struct file *filp, const char __user *buf, size_t
 ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count, 
 	loff_t *f_pos)
 {
-	Device* dev = (Device*)filp->private_data;
 	ssize_t retval = 0;
+	Device* dev;
+
+	dev = (Device*)filp->private_data;
 	
-	if(mode) {
+	if(dev->mode) {
 		/* Returning period of the signal */ 
 		count = sizeof(unsigned int);
 		if (copy_to_user(buf, &dev->period, count) != 0)
@@ -146,11 +150,12 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	} else {
 		/* Signal sampling at given frequency */
 	
-		hrtimer_start(&sampling_timer, sampling_kt, HRTIMER_MODE_REL);
-		//Wait until data buff is filled with BUF_LEN values
+		hrtimer_start(&dev->sampling_timer, dev->sampling_kt, HRTIMER_MODE_REL);
+		
+		/* Wait until data buff is filled with BUF_LEN values */
 		wait_event_killable(wq, dev->sample == BUFF_LEN);
 
-		hrtimer_cancel(&sampling_timer);
+		hrtimer_cancel(&dev->sampling_timer);
 	
 		if (mutex_lock_killable(&dev->dev_mutex))
 			return -EINTR;
@@ -160,10 +165,8 @@ ssize_t vibration_driver_read(struct file *filp, char __user *buf, size_t count,
 	
 		if (*f_pos + count > BUFF_LEN)
 			count = BUFF_LEN - *f_pos;
-	
-		/*if (count > BLOCK_LEN)
-			count = BLOCK_LEN;
-		*/
+
+		// Copying signal from kernel to user space
 		if (copy_to_user(buf, dev->data, count) != 0)
 		{
 			retval = -EFAULT;
@@ -182,7 +185,13 @@ out:
 	return retval;
 }
 
-int vibration_driver_release(struct inode* inode, struct file* filp) {
+int vibration_driver_release(struct inode* inode, struct file* filp) 
+{
+	Device* dev;
+	
+	dev = (Device*)filp->private_data;		
+	
+	hrtimer_cancel(&dev->sampling_timer); 
 
 	return 0;
 }
@@ -213,6 +222,13 @@ int vibration_driver_open(struct inode* inode, struct file* filp)
 	dev->period = 0;
 	dev->timestamp = 0;
 	dev->sample = 0;
+	dev->mode = 0;
+	dev->frequency = 125 * 1000; 	// Sampling rate 8kHz = 125 us
+
+	/* Initialize SAMPLING high resolution timer */
+	hrtimer_init(&dev->sampling_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+    dev->sampling_kt = ktime_set(TIMER_SEC, dev->frequency);
+    dev->sampling_timer.function = &sampling_timer_callback;	
 
 	/* Memory allocation for data if first time opened */
 	if (dev->data == NULL)
@@ -247,8 +263,7 @@ int construct_device(Device* dev, int minor, struct class *class)
 
 	err = cdev_add(&(dev->c_dev), devno, 1);
 	if( err ) {
-		printk(KERN_ALERT "Error %d while trying to add %s%d",
-			err, DEVICE_NAME, minor);
+		printk(KERN_WARNING "Error %d while trying to add %s%d", err, DEVICE_NAME, minor);
 		return err;
 	}
 
@@ -261,7 +276,7 @@ int construct_device(Device* dev, int minor, struct class *class)
 	}
 
 #ifdef DEBUG
-	printk(KERN_INFO "Device %d file created\n", minor);
+	printk(KERN_INFO "Device %d device created\n", minor);
 #endif
 
 	return 0;
@@ -275,8 +290,6 @@ int vibration_driver_init(void)
 
 	err = 0;
 	devices_to_destroy = 0;
-	mode = 0;
-	frequency = 125 * 1000; 	// Sampling rate 8kHz = 125 us
 
 	/* Parse arguments */
 	if( devices_to_create > MAX_DEVICES ) {
@@ -330,14 +343,9 @@ int vibration_driver_init(void)
     period_kt = ktime_set(TIMER_SEC, TIMER_NANO_SEC);    
     period_timer.function = &period_timer_callback;
 	hrtimer_start(&period_timer, period_kt, HRTIMER_MODE_REL);
-
-	/* Initialize SAMPLING high resolution timer */
-	hrtimer_init(&sampling_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-    sampling_kt = ktime_set(TIMER_SEC, frequency);
-    sampling_timer.function = &sampling_timer_callback;	
     
 #ifdef DEBUG
-	printk(KERN_INFO "Timers are set\n");
+	printk(KERN_INFO "Timer is set\n");
 #endif   
 
 	for(i = 0; i < devices_to_create; i++) {
@@ -384,7 +392,6 @@ void vibration_driver_exit(void)
 
 	/* Timers destroying */
 	hrtimer_cancel(&period_timer);   
-	hrtimer_cancel(&sampling_timer); 
 
 	if (devices) {
 		num_of_iterations = devices_to_destroy ? devices_to_destroy : devices_to_create;
@@ -424,7 +431,7 @@ MODULE_LICENSE("Dual BSD/GPL");
 
 MODULE_AUTHOR(DRIVER_AUTHOR);       /* Who wrote this module? */
 
-MODULE_DESCRIPTION(DRIVER_DESC);    /* What does this module do */
+MODULE_DESCRIPTION(DRIVER_DESC);    /* What does this module do? */
 
 /*
 * The MODULE_SUPPORTED_DEVICE macro might be used in the future to help

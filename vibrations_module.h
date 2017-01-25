@@ -42,13 +42,22 @@
 #define BUFF_LEN 1024
 #define BLOCK_LEN 512
 
+/* mode. 
+ * 0 is for setting frequency and sampling.
+ * 1 is for returning period 
+ * Used as index od data buff when sampling signal
+ */
 typedef struct device_st {
 	unsigned char *data;
-	unsigned int sample;	// Used as index od data buff when sampling signal
+	unsigned int sample;
 	unsigned int period;
 	unsigned int timestamp;
+	unsigned int frequency;
+	struct hrtimer sampling_timer;	
+	ktime_t sampling_kt;	
 	struct mutex dev_mutex;
 	int irq_gpio;
+	int mode;
 	struct cdev c_dev;
 } Device;
 
